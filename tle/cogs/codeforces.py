@@ -289,26 +289,44 @@ class Codeforces(commands.Cog):
 
     @commands.hybrid_command(brief='Challenge')
     @cf_common.user_guard(group='gitgud')
-    async def gitgud(self, ctx: commands.Context, delta: int = 0) -> None:
+    async def gitgud(self, ctx: commands.Context, min_delta: int = 0, max_delta: typing.Optional[int] = None) -> None:
         """Request a problem for gitgud points.
-        delta  | -300 | -200 | -100 |  0  | +100 | +200 | +300
-        points |   2  |   3  |   5  |  8  |  12  |  17  |  23
+        
+        Usage:
+            ;gitgud            (picks at current rating)
+            ;gitgud 100        (picks at rating + 100)
+            ;gitgud -100 200   (picks in range rating - 100 to rating + 200)
         """
-        await self._validate_gitgud_status(ctx, delta)
+        # If only one delta is passed (e.g. ;gitgud 100), set range to [100, 100]
+        if max_delta is None:
+            max_delta = min_delta
+
+        # Swap bounds if user typed them backwards (e.g. ;gitgud 200 -100)
+        if min_delta > max_delta:
+            min_delta, max_delta = max_delta, min_delta
+
+        await self._validate_gitgud_status(ctx, min_delta)
         (handle,) = await cf_common.resolve_handles(
             ctx, self.converter, ('!' + str(ctx.author),)
         )
         user = await self.bot.user_db.fetch_cf_user(handle)
         rating = round(user.effective_rating, -2)
+
+        # Calculate target rating bounds
+        min_rating = rating + min_delta
+        max_rating = rating + max_delta
+
         submissions = await cf.user.status(handle=handle)
         solved = {sub.problem.name for sub in submissions}
         noguds = await self.bot.user_db.get_noguds(ctx.message.author.id)
 
+        # Filter problems within the target rating range
         problems = [
             prob
             for prob in self.bot.cf_cache.problem_cache.problems
             if (
-                prob.rating == rating + delta
+                prob.rating is not None
+                and min_rating <= prob.rating <= max_rating
                 and prob.name not in solved
                 and prob.name not in noguds
             )
@@ -322,8 +340,9 @@ class Codeforces(commands.Cog):
 
         problems = list(filter(check, problems))
         if not problems:
-            raise CodeforcesCogError('No problem to assign')
+            raise CodeforcesCogError('No problem to assign in that range')
 
+        # Sort problems chronologically by contest start time
         problems.sort(
             key=lambda problem: (
                 self.bot.cf_cache.contest_cache.get_contest(
@@ -332,8 +351,13 @@ class Codeforces(commands.Cog):
             )
         )
 
-        choice = max(random.randrange(len(problems)) for _ in range(2))
-        await self._gitgud(ctx, handle, problems[choice], delta)
+        # Pick a problem with a bias toward newer contests
+        choice = max(random.randrange(len(problems)) for _ in range(5))
+        chosen_problem = problems[choice]
+
+        # Calculate exact delta of the rolled problem for accurate point assignment
+        actual_delta = chosen_problem.rating - rating
+        await self._gitgud(ctx, handle, chosen_problem, actual_delta)
 
     @commands.hybrid_command(brief='Print user gitgud history')
     async def gitlog(
