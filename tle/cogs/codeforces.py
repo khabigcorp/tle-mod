@@ -418,8 +418,9 @@ class Codeforces(commands.Cog):
         challenge_id, issue_time, name, contestId, index, delta = active
         if name not in solved:
             raise CodeforcesCogError("You haven't completed your challenge.")
-
-        delta = _GITGUD_SCORE_DISTRIB[delta // 100 + 3]
+        
+        clamped_delta = max(-300, min(300, delta))
+        delta = _GITGUD_SCORE_DISTRIB[clamped_delta // 100 + 3]
         finish_time = int(datetime.datetime.now().timestamp())
         rc = await self.bot.user_db.complete_challenge(
             user_id, challenge_id, finish_time, delta
